@@ -1,788 +1,271 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Chat_God</title>
-    <!-- Load Tailwind CSS -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Use Inter Font -->
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
-        body {
-            font-family: 'Inter', sans-serif;
-            /* Dark background for the body */
-            background-color: #0f172a; /* slate-900 */
-        }
-        /* Custom scrollbar for chat area (dark theme adjustment) */
-        #conversation-list::-webkit-scrollbar,
-        #chat-messages::-webkit-scrollbar {
-            width: 6px;
-        }
-        #conversation-list::-webkit-scrollbar-thumb,
-        #chat-messages::-webkit-scrollbar-thumb {
-            background-color: #475569; /* slate-600 */
-            border-radius: 3px;
-        }
-        #conversation-list::-webkit-scrollbar-track,
-        #chat-messages::-webkit-scrollbar-track {
-            background-color: #1e293b; /* slate-800 */
-        }
-        .active-conversation {
-            background-color: #4f46e5 !important; /* indigo-600 */
-            color: white !important;
-        }
-        .active-conversation .text-slate-400 {
-            color: #d1d5db !important; /* light gray */
-        }
-    </style>
-</head>
-<body class="min-h-screen flex items-center justify-center p-4">
+import React, { useState, useEffect, useRef } from 'react';
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
+import { getFirestore, collection, query, orderBy, limit, addDoc, serverTimestamp, onSnapshot } from 'firebase/firestore';
+import { MessageCircle, Send, Loader2 } from 'lucide-react';
 
-    <!-- Modal for CAPTCHA Challenge (Blocks access until solved) -->
-    <div id="captcha-modal" class="fixed inset-0 bg-indigo-900 bg-opacity-90 flex items-center justify-center p-4 z-[100]">
-        <div class="bg-slate-800 p-8 rounded-xl shadow-2xl w-full max-w-md text-center text-white">
-            <h2 class="text-3xl font-bold text-indigo-400 mb-4">Security Check</h2>
-            <p class="text-slate-300 mb-6">Please solve the CAPTCHA to verify your identity and access the chat.</p>
+// --- Global Variables and Firebase Setup ---
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
-            <div id="captcha-challenge" class="text-4xl font-mono p-4 mb-4 bg-slate-900 border-2 border-indigo-500 rounded-lg inline-block shadow-inner min-w-[50%] text-indigo-400">
-                <!-- CAPTCHA expression goes here -->
-            </div>
+// The main component for the Chat_God application
+const App = () => {
+  const [db, setDb] = useState(null);
+  const [auth, setAuth] = useState(null);
+  const [userId, setUserId] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [messages, setMessages] = useState([]);
+  const [newMessage, setNewMessage] = useState('');
+  const [error, setError] = useState(null);
 
-            <form id="captcha-form">
-                <input
-                    type="text"
-                    id="captcha-input"
-                    class="w-full p-3 border border-slate-600 rounded-lg text-center text-xl focus:ring-indigo-500 focus:border-indigo-500 transition duration-150 bg-slate-700 text-white placeholder-slate-400"
-                    placeholder="Enter the result"
-                    autocomplete="off"
-                    required
-                    inputmode="numeric"
-                >
-                <button
-                    type="submit"
-                    id="captcha-verify-btn"
-                    class="mt-4 w-full bg-indigo-600 text-white p-3 rounded-lg hover:bg-indigo-500 transition duration-150 shadow-lg font-semibold"
-                >
-                    Verify and Join Chat
-                </button>
-            </form>
+  const messagesEndRef = useRef(null);
 
-            <p id="captcha-error" class="text-red-400 mt-3 hidden text-sm">Incorrect answer. Please try again.</p>
-        </div>
-    </div>
+  // Function to scroll to the bottom of the messages list
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
 
-    <!-- Main Chat Container - Updated Layout for Conversation List and Chat Window -->
-    <div class="w-full max-w-5xl bg-slate-800 shadow-2xl rounded-xl flex h-[90vh] md:h-[80vh] overflow-hidden">
+  // 1. Firebase Initialization and Authentication Effect
+  useEffect(() => {
+    try {
+      if (Object.keys(firebaseConfig).length === 0) {
+        throw new Error("Firebase configuration is missing.");
+      }
+      
+      const app = initializeApp(firebaseConfig);
+      const firestore = getFirestore(app);
+      const firebaseAuth = getAuth(app);
+      
+      setDb(firestore);
+      setAuth(firebaseAuth);
 
-        <!-- Conversation Sidebar -->
-        <div class="w-1/3 min-w-[200px] border-r border-slate-700 flex flex-col bg-slate-800 text-white">
-            <header class="p-4 bg-indigo-700 flex justify-between items-center shadow-md">
-                <h2 class="text-lg font-bold">Conversations</h2>
-                <button id="new-chat-btn" class="text-sm bg-indigo-600 hover:bg-indigo-500 px-3 py-1 rounded-full transition duration-150 shadow-md">
-                    + Chat
-                </button>
-            </header>
-
-            <div class="p-4 bg-slate-900 border-b border-slate-700">
-                <div class="text-sm text-slate-400 truncate">
-                    Alias: <span id="user-alias-display" class="font-medium mr-2 cursor-pointer hover:underline">Loading...</span>
-                    <button id="edit-alias-btn" class="text-xs bg-indigo-800 hover:bg-indigo-900 px-2 py-0.5 rounded-full transition duration-150">Edit</button>
-                </div>
-            </div>
-
-            <div id="conversation-list" class="flex-grow overflow-y-auto">
-                <!-- Conversation tiles will be injected here -->
-                <div id="conv-loading-indicator" class="text-center text-slate-400 p-4">
-                    Loading conversations...
-                </div>
-            </div>
-
-            <footer class="p-2 text-xs text-slate-400 bg-slate-900 border-t border-slate-700">
-                <p id="user-id-info">User ID: N/A</p>
-            </footer>
-        </div>
-
-        <!-- Main Chat Window -->
-        <div id="chat-window" class="flex-grow flex flex-col w-2/3">
-            <header class="p-4 bg-slate-700 text-white rounded-tr-xl shadow-md border-b border-slate-600">
-                <h1 id="current-chat-name" class="text-xl font-bold">Select a Chat</h1>
-            </header>
-
-            <!-- Message Display Area -->
-            <div id="chat-messages" class="flex-grow p-4 space-y-4 overflow-y-auto bg-slate-900">
-                <!-- Messages will be injected here -->
-                <div id="welcome-message" class="text-center text-slate-400 mt-10">
-                    Your direct messages and group chats will appear on the left.
-                    Click "+ Chat" to start a new conversation.
-                </div>
-            </div>
-
-            <!-- Message Input Form -->
-            <form id="message-form" class="p-4 border-t border-slate-700 bg-slate-800 flex items-center space-x-2 hidden"> <!-- HIDDEN until alias is set -->
-                <input
-                    type="text"
-                    id="message-input"
-                    placeholder="Type a message..."
-                    autocomplete="off"
-                    class="flex-grow p-3 border border-slate-600 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 transition duration-150 bg-slate-700 text-white placeholder-slate-400"
-                    required
-                >
-                <button
-                    type="submit"
-                    id="send-button"
-                    class="bg-indigo-600 text-white p-3 rounded-lg hover:bg-indigo-500 transition duration-150 shadow-md disabled:bg-indigo-800"
-                    disabled
-                >
-                    Send
-                </button>
-            </form>
-        </div>
-    </div>
-
-    <!-- Modal for Alias Change (Now handles initial mandatory setup too) -->
-    <div id="alias-modal" class="fixed inset-0 bg-black bg-opacity-70 hidden items-center justify-center p-4 z-50">
-        <div class="bg-slate-800 p-6 rounded-xl shadow-2xl w-full max-w-sm text-white">
-            <h2 id="alias-modal-title" class="text-xl font-bold mb-4">Change Your Alias</h2>
-            <input type="text" id="new-alias-input" class="w-full p-3 border border-slate-600 rounded-lg mb-4 bg-slate-700 text-white" maxlength="20" placeholder="Enter a new alias (max 20 chars)">
-            <div class="flex justify-end space-x-2">
-                <button id="cancel-alias-btn" class="px-4 py-2 bg-slate-600 text-white rounded-lg hover:bg-slate-500 transition duration-150">Cancel</button>
-                <button id="save-alias-btn" class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-500 transition duration-150">Save</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Modal for New Chat / Find User -->
-    <div id="new-chat-modal" class="fixed inset-0 bg-black bg-opacity-70 hidden items-center justify-center p-4 z-50">
-        <div class="bg-slate-800 p-6 rounded-xl shadow-2xl w-full max-w-lg text-white">
-            <h2 class="text-xl font-bold mb-4 border-b border-slate-700 pb-2">Start a New Direct Message</h2>
-            <p class="text-sm text-slate-400 mb-4">Select a user to start a private conversation.</p>
-
-            <div id="user-list-container" class="max-h-64 overflow-y-auto border border-slate-700 rounded-lg p-2 bg-slate-900">
-                <p id="user-list-loading" class="text-center text-slate-500 p-4">Loading available users...</p>
-                <!-- User list for DMs will be inserted here -->
-            </div>
-
-            <div class="flex justify-end space-x-2 mt-4">
-                <button id="cancel-new-chat-btn" class="px-4 py-2 bg-slate-600 text-white rounded-lg hover:bg-slate-500 transition duration-150">Cancel</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Firebase SDK Imports -->
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, addDoc, setDoc, onSnapshot, collection, query, where, getDoc, getDocs, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-
-        // IMPORTANT: Global variables provided by the Canvas environment
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-chat-app';
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
-        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-
-        let db;
-        let auth;
-        let currentUserId = null;
-        let currentUserAlias = "Guest";
-        let isAuthReady = false;
-        let isAliasSet = false; // NEW: Track if the alias has been set/verified
-        let correctAnswer = 0; // Stores the correct answer for the CAPTCHA
-        let currentConversationId = null; // ID of the currently selected chat
-
-        // DOM Elements
-        const chatMessagesEl = document.getElementById('chat-messages');
-        const messageForm = document.getElementById('message-form');
-        const messageInput = document.getElementById('message-input');
-        const sendButton = document.getElementById('send-button');
-        const aliasDisplayEl = document.getElementById('user-alias-display');
-        const userIdInfoEl = document.getElementById('user-id-info');
-        const aliasModal = document.getElementById('alias-modal');
-        const aliasModalTitleEl = document.getElementById('alias-modal-title');
-        const newAliasInput = document.getElementById('new-alias-input');
-        const saveAliasBtn = document.getElementById('save-alias-btn');
-        const cancelAliasBtn = document.getElementById('cancel-alias-btn');
-        const editAliasBtn = document.getElementById('edit-alias-btn');
-        const currentChatNameEl = document.getElementById('current-chat-name');
-        const conversationListEl = document.getElementById('conversation-list');
-        const welcomeMessageEl = document.getElementById('welcome-message');
-        const convLoadingIndicator = document.getElementById('conv-loading-indicator');
-
-        // CAPTCHA Elements
-        const captchaModal = document.getElementById('captcha-modal');
-        const captchaChallengeEl = document.getElementById('captcha-challenge');
-        const captchaForm = document.getElementById('captcha-form');
-        const captchaInput = document.getElementById('captcha-input');
-        const captchaErrorEl = document.getElementById('captcha-error');
-
-        // New Chat Modal Elements
-        const newChatModal = document.getElementById('new-chat-modal');
-        const newChatBtn = document.getElementById('new-chat-btn');
-        const cancelNewChatBtn = document.getElementById('cancel-new-chat-btn');
-        const userListContainer = document.getElementById('user-list-container');
-        const userListLoading = document.getElementById('user-list-loading');
-
-        // --- UTILITIES ---
-
-        const withExponentialBackoff = async (fn, retries = 5, delay = 1000) => {
-            for (let i = 0; i < retries; i++) {
-                try {
-                    return await fn();
-                } catch (error) {
-                    if (i === retries - 1) throw error;
-                    await new Promise(resolve => setTimeout(resolve, delay * (2 ** i)));
-                }
-            }
-        };
-
-        const showTemporaryMessage = (text, isError = true) => {
-            const messageBar = document.createElement('div');
-            messageBar.className = `fixed bottom-0 left-0 right-0 p-2 text-sm z-50 text-center ${isError ? 'bg-red-600' : 'bg-green-600'} text-white`;
-            messageBar.textContent = text;
-            document.body.appendChild(messageBar);
-            setTimeout(() => messageBar.remove(), 3000);
-        };
-
-        // --- CAPTCHA LOGIC (Unchanged) ---
-
-        const generateCaptcha = () => {
-            const num1 = Math.floor(Math.random() * 10) + 1;
-            const num2 = Math.floor(Math.random() * 10) + 1;
-            const operators = ['+', '-'];
-            const operator = operators[Math.floor(Math.random() * operators.length)];
-
-            let challenge = '';
-
-            if (operator === '+') {
-                challenge = `${num1} + ${num2}`;
-                correctAnswer = num1 + num2;
-            } else if (operator === '-') {
-                if (num1 < num2) {
-                    challenge = `${num2} - ${num1}`;
-                    correctAnswer = num2 - num1;
-                } else {
-                    challenge = `${num1} - ${num2}`;
-                    correctAnswer = num1 - num2;
-                }
-            }
-
-            captchaChallengeEl.textContent = challenge + ' = ?';
-            captchaInput.value = '';
-            captchaErrorEl.classList.add('hidden');
-            captchaInput.focus();
-        };
-
-        const handleCaptchaSubmit = (e) => {
-            e.preventDefault();
-            const userAnswer = parseInt(captchaInput.value.trim(), 10);
-
-            if (userAnswer === correctAnswer) {
-                captchaModal.classList.add('hidden');
-                initializeFirebase();
+      // Listener for Auth State Changes
+      const unsubscribeAuth = onAuthStateChanged(firebaseAuth, async (user) => {
+        if (user) {
+          // User is signed in
+          setUserId(user.uid);
+          setLoading(false);
+        } else {
+          // No user is signed in, attempt sign-in
+          try {
+            if (initialAuthToken) {
+              await signInWithCustomToken(firebaseAuth, initialAuthToken);
             } else {
-                captchaErrorEl.textContent = "Incorrect answer. Please try again.";
-                captchaErrorEl.classList.remove('hidden');
-                generateCaptcha();
+              await signInAnonymously(firebaseAuth);
             }
-        };
-
-        // --- FIREBASE SETUP AND AUTHENTICATION ---
-
-        const initializeFirebase = async () => {
-            if (!firebaseConfig) {
-                console.error("Firebase configuration is missing.");
-                return;
-            }
-
-            try {
-                setLogLevel('Debug');
-                const app = initializeApp(firebaseConfig);
-                db = getFirestore(app);
-                auth = getAuth(app);
-
-                // Use onAuthStateChanged to manage user state and trigger data loading
-                onAuthStateChanged(auth, async (user) => {
-                    if (user) {
-                        currentUserId = user.uid;
-                        userIdInfoEl.textContent = `User ID: ${currentUserId}`;
-                        isAuthReady = true;
-
-                        // Check if the user has an alias, forcing them to set one if not.
-                        await checkAndLoadAlias();
-
-                    } else {
-                        // Attempt sign in if not already signed in
-                        if (initialAuthToken) {
-                            await withExponentialBackoff(() => signInWithCustomToken(auth, initialAuthToken));
-                        } else {
-                            await withExponentialBackoff(() => signInAnonymously(auth));
-                        }
-                    }
-                });
-
-            } catch (error) {
-                console.error("Error initializing Firebase or signing in:", error);
-                showTemporaryMessage("Failed to connect to chat server.", true);
-            }
-        };
-
-        // --- ALIAS MANAGEMENT (PRIVATE & PUBLIC DATA) ---
-
-        const getAliasDocRef = (userId) => {
-            // Private data storage for user alias
-            return doc(db, `artifacts/${appId}/users/${userId}/alias_data/profile`);
-        };
-
-        const getPublicProfilesCollectionRef = () => {
-            // PUBLIC collection for profiles (readable by all authenticated users)
-            return collection(db, `artifacts/${appId}/public/data/user_profiles`);
-        };
-
-        const checkAndLoadAlias = async () => {
-            if (!db || !currentUserId) return;
-
-            const aliasDocRef = getAliasDocRef(currentUserId);
-            let aliasExists = false;
-
-            try {
-                const docSnap = await withExponentialBackoff(() => getDoc(aliasDocRef));
-
-                if (docSnap.exists() && docSnap.data().alias) {
-                    currentUserAlias = docSnap.data().alias;
-                    aliasExists = true;
-                }
-
-            } catch (error) {
-                console.error("Error checking user alias:", error);
-            }
-
-            aliasDisplayEl.textContent = currentUserAlias;
-            newAliasInput.value = currentUserAlias;
-
-            if (aliasExists) {
-                isAliasSet = true;
-                setupConversationListener();
-            } else {
-                // Alias is missing - force the user to set it before continuing
-                isAliasSet = false;
-                forceSetInitialAlias();
-            }
-        };
-
-        const forceSetInitialAlias = () => {
-            // Hide the message input until alias is set
-            messageForm.classList.add('hidden'); 
-            
-            // Customize modal for mandatory setup
-            aliasModalTitleEl.textContent = "Choose Your Chat Alias (Required)";
-            document.getElementById('save-alias-btn').textContent = "Save and Enter Chat";
-            document.getElementById('cancel-alias-btn').classList.add('hidden'); // Cannot cancel
-            
-            // Suggest an alias
-            const suggestedAlias = "User#" + currentUserId.substring(0, 4).toUpperCase();
-            newAliasInput.value = suggestedAlias;
-            
-            aliasModal.classList.remove('hidden');
-            aliasModal.classList.add('flex');
-            newAliasInput.focus();
-        };
-
-        const saveUserAlias = async (newAlias) => {
-            if (!db || !currentUserId || !newAlias) return;
-
-            const trimmedAlias = newAlias.trim().substring(0, 20);
-            const aliasData = { alias: trimmedAlias }; 
-
-            try {
-                // 1. Private Write (for persistence)
-                const aliasDocRef = getAliasDocRef(currentUserId);
-                await withExponentialBackoff(() => setDoc(aliasDocRef, aliasData, { merge: true }));
-
-                // 2. PUBLIC Write (to allow other users to see the alias)
-                const publicProfileDocRef = doc(getPublicProfilesCollectionRef(), currentUserId);
-                await withExponentialBackoff(() => setDoc(publicProfileDocRef, {
-                    alias: trimmedAlias,
-                    userId: currentUserId 
-                }, { merge: true }));
-                
-                currentUserAlias = trimmedAlias;
-                aliasDisplayEl.textContent = currentUserAlias;
-                showTemporaryMessage("Alias updated.", false);
-                return true; // Success
-            } catch (error) {
-                console.error("Error saving user alias:", error);
-                showTemporaryMessage("Failed to save alias.", true);
-                return false; // Failure
-            }
-        };
-
-        // --- CONVERSATION AND MESSAGE MANAGEMENT (PUBLIC DATA) ---
-
-        const getConversationsCollectionRef = () => {
-            return collection(db, `artifacts/${appId}/public/data/conversations`);
-        };
-
-        const getMessagesCollectionRef = () => {
-            return collection(db, `artifacts/${appId}/public/data/messages`);
-        };
-
-        const setupConversationListener = () => {
-            if (!db || !isAuthReady || !isAliasSet) return; // Guard for alias set
-
-            const convRef = getConversationsCollectionRef();
-            // Query for conversations where the current user ID is in the participants array
-            // Note: Cannot use 'orderBy' on queried fields, so sort client-side.
-            const q = query(convRef, where("participants", "array-contains", currentUserId));
-
-            // Start listening for real-time updates to the conversation list
-            const unsubscribe = onSnapshot(q, (snapshot) => {
-                const conversations = [];
-                snapshot.forEach(doc => {
-                    const data = doc.data();
-                    conversations.push({ ...data, id: doc.id });
-                });
-
-                // Sort by last updated time (using client-side timestamp for simplicity)
-                conversations.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
-
-                renderConversationList(conversations);
-            }, (error) => {
-                console.error("Error listening to conversations:", error);
-                convLoadingIndicator.textContent = "Error loading chats.";
-            });
-        };
-
-        let unsubscribeMessages = null;
-
-        const selectConversation = (convId, convName) => {
-            if (currentConversationId === convId) return;
-
-            // 1. Update UI state
-            currentConversationId = convId;
-            currentChatNameEl.textContent = convName;
-            welcomeMessageEl.classList.add('hidden');
-            sendButton.disabled = false;
-            messageInput.placeholder = `Message ${convName}...`;
-
-            // Update active state in the sidebar
-            document.querySelectorAll('.conversation-tile').forEach(el => {
-                el.classList.remove('active-conversation');
-                el.classList.remove('bg-indigo-600', 'text-white');
-                el.classList.add('bg-slate-700', 'hover:bg-slate-600');
-            });
-            const selectedEl = document.getElementById(`conv-${convId}`);
-            if (selectedEl) {
-                selectedEl.classList.add('active-conversation');
-            }
-
-            // 2. Clear old listener if it exists
-            if (unsubscribeMessages) {
-                unsubscribeMessages();
-            }
-
-            // 3. Setup new message listener
-            const messagesRef = getMessagesCollectionRef();
-            // Query for messages belonging to the selected conversation
-            const q = query(messagesRef, where("conversationId", "==", convId));
-
-            chatMessagesEl.innerHTML = `<div class="text-center text-slate-400 mt-10">Loading messages...</div>`;
-
-            unsubscribeMessages = onSnapshot(q, (snapshot) => {
-                const messages = [];
-                snapshot.forEach(doc => {
-                    const data = doc.data();
-                    messages.push({ ...data, id: doc.id, timestamp: data.timestamp || 0 });
-                });
-
-                // Sort messages by timestamp client-side
-                messages.sort((a, b) => a.timestamp - b.timestamp);
-
-                renderMessages(messages);
-            }, (error) => {
-                console.error("Error listening to messages:", error);
-                chatMessagesEl.innerHTML = `<div class="text-center text-red-400 mt-10">Failed to load messages.</div>`;
-            });
-        };
-
-        const sendMessage = async (messageText) => {
-            if (!db || !currentUserId || !currentUserAlias || !messageText.trim() || !currentConversationId) return;
-
-            const messagesRef = getMessagesCollectionRef();
-            const messageData = {
-                conversationId: currentConversationId,
-                userId: currentUserId,
-                alias: currentUserAlias,
-                text: messageText.trim(),
-                timestamp: Date.now()
-            };
-
-            try {
-                // 1. Add the new message
-                await withExponentialBackoff(() => addDoc(messagesRef, messageData));
-                messageInput.value = '';
-
-                // 2. Update the parent conversation's last message time/text
-                const convDocRef = doc(getConversationsCollectionRef(), currentConversationId);
-                await withExponentialBackoff(() => setDoc(convDocRef, {
-                    lastMessage: `${currentUserAlias}: ${messageText.trim().substring(0, 50)}`,
-                    updatedAt: messageData.timestamp
-                }, { merge: true }));
-
-            } catch (error) {
-                console.error("Error sending message:", error);
-                showTemporaryMessage("Failed to send message.", true);
-            }
-        };
-
-        // --- NEW CHAT / DM LOGIC ---
-
-        const loadAllUsers = async () => {
-            if (!db || !currentUserId || !isAuthReady || !isAliasSet) {
-                // Ensure we only proceed if Firebase, Auth, and Alias are ready
-                console.warn("Load All Users aborted: Auth/Alias not ready.");
-                userListLoading.textContent = "Error: Authentication or Alias setup not complete. Please set your alias first.";
-                return;
-            }
-
-            userListContainer.innerHTML = '';
-            userListContainer.appendChild(userListLoading);
-            userListLoading.classList.remove('hidden');
-
-            try {
-                // Query the public user_profiles collection which is globally readable by authenticated users.
-                const profilesRef = getPublicProfilesCollectionRef();
-                // Fetch all public profiles
-                const q = query(profilesRef); 
-                
-                const snapshot = await withExponentialBackoff(() => getDocs(q));
-
-                const users = [];
-                snapshot.forEach(docSnap => {
-                    const data = docSnap.data();
-                    // Filter out the current user client-side
-                    if (data.userId !== currentUserId && data.alias) { // Ensure they have an alias
-                         users.push({
-                            userId: data.userId,
-                            alias: data.alias || `User#${data.userId.substring(0, 4)}`
-                        });
-                    }
-                });
-
-                renderUserList(users);
-
-            } catch (error) {
-                console.error("Error loading user list:", error);
-                userListLoading.textContent = "Failed to load users. Check console for permissions error.";
-            } finally {
-                userListLoading.classList.add('hidden');
-            }
-        };
-
-        const renderUserList = (users) => {
-            userListContainer.innerHTML = '';
-            if (users.length === 0) {
-                userListContainer.innerHTML = `<p class="text-center text-slate-500 p-4">No other users found. Start by chatting with yourself or wait for others to join!</p>`;
-                return;
-            }
-
-            users.forEach(user => {
-                const userEl = document.createElement('div');
-                userEl.className = "p-3 border-b border-slate-700 hover:bg-slate-700 cursor-pointer transition duration-150 rounded-lg";
-                // Show alias and a truncated user ID for searchability
-                userEl.innerHTML = `<span class="font-semibold text-indigo-400">${user.alias}</span> <span class="text-slate-500 text-xs">(${user.userId.substring(0, 8)})</span>`;
-                userEl.addEventListener('click', () => {
-                    startDirectMessage(user.userId, user.alias);
-                    newChatModal.classList.add('hidden');
-                    newChatModal.classList.remove('flex');
-                });
-                userListContainer.appendChild(userEl);
-            });
-        };
-
-        const startDirectMessage = async (targetUserId, targetAlias) => {
-            if (!db || !currentUserId) return;
-
-            // Create a deterministic conversation ID based on sorted user IDs
-            const participants = [currentUserId, targetUserId].sort();
-            const conversationId = participants.join('_');
-
-            const convDocRef = doc(getConversationsCollectionRef(), conversationId);
-
-            try {
-                const docSnap = await withExponentialBackoff(() => getDoc(convDocRef));
-
-                if (!docSnap.exists()) {
-                    // Conversation doesn't exist, create it
-                    const conversationData = {
-                        type: 'dm',
-                        participants: participants,
-                        participantAliases: {
-                            [currentUserId]: currentUserAlias,
-                            [targetUserId]: targetAlias,
-                        },
-                        lastMessage: "Conversation started.",
-                        updatedAt: Date.now()
-                    };
-                    await withExponentialBackoff(() => setDoc(convDocRef, conversationData));
-                    showTemporaryMessage(`DM with ${targetAlias} created.`, false);
-                }
-
-                // Select the conversation to start chatting
-                const chatName = targetAlias;
-                selectConversation(conversationId, chatName);
-
-            } catch (error) {
-                console.error("Error starting DM:", error);
-                showTemporaryMessage("Failed to start DM.", true);
-            }
-        };
-
-        // --- UI RENDERING ---
-
-        const renderConversationList = (conversations) => {
-            conversationListEl.innerHTML = '';
-            convLoadingIndicator.classList.add('hidden');
-
-            if (conversations.length === 0) {
-                conversationListEl.innerHTML = `<div class="text-center text-slate-500 p-4">No conversations yet. Click '+ Chat' to start one!</div>`;
-                return;
-            }
-
-            conversations.forEach(conv => {
-                // Determine the name of the chat (the other user's alias for DMs)
-                const otherUserId = conv.participants.find(id => id !== currentUserId);
-                const chatName = conv.participantAliases[otherUserId] || 'Unknown User'; // Simple DM naming
-
-                const convEl = document.createElement('div');
-                convEl.id = `conv-${conv.id}`;
-                convEl.className = `conversation-tile p-3 cursor-pointer border-b border-slate-700 transition duration-150 bg-slate-700 hover:bg-slate-600 ${conv.id === currentConversationId ? 'active-conversation' : ''}`;
-
-                convEl.innerHTML = `
-                    <div class="font-bold text-lg truncate">${chatName}</div>
-                    <div class="text-sm text-slate-400 truncate">${conv.lastMessage || 'No messages yet.'}</div>
-                    <div class="text-xs text-right text-slate-500">
-                        ${conv.updatedAt ? new Date(conv.updatedAt).toLocaleTimeString() : ''}
-                    </div>
-                `;
-
-                convEl.addEventListener('click', () => selectConversation(conv.id, chatName));
-                conversationListEl.appendChild(convEl);
-            });
-        };
-
-        const renderMessages = (messages) => {
-            chatMessagesEl.innerHTML = '';
-
-            if (messages.length === 0) {
-                chatMessagesEl.innerHTML = `<div class="text-center text-slate-400 mt-10">Start the conversation!</div>`;
-                return;
-            }
-
-            messages.forEach(msg => {
-                const isMine = msg.userId === currentUserId;
-                const messageEl = document.createElement('div');
-
-                // Base message styling
-                messageEl.className = `flex ${isMine ? 'justify-end' : 'justify-start'}`;
-
-                // Message bubble content
-                messageEl.innerHTML = `
-                    <div class="max-w-xs md:max-w-md lg:max-w-lg p-3 rounded-xl shadow-md transition duration-150 ease-in-out ${
-                        isMine
-                            ? 'bg-indigo-500 text-white rounded-br-none'
-                            : 'bg-slate-700 border border-slate-600 text-white rounded-tl-none'
-                    }">
-                        <div class="text-xs font-semibold mb-1 ${isMine ? 'text-indigo-200' : 'text-indigo-400'}">
-                            ${msg.alias} ${isMine ? '(You)' : ''}
-                        </div>
-                        <p class="text-sm break-words">${msg.text}</p>
-                        <div class="text-right text-xs mt-1 ${isMine ? 'text-indigo-300' : 'text-slate-400'}">
-                            ${msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Sending...'}
-                        </div>
-                    </div>
-                `;
-                chatMessagesEl.appendChild(messageEl);
-            });
-
-            // Scroll to the bottom after rendering new messages
-            chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
-        };
-
-        // --- EVENT LISTENERS ---
-
-        messageForm.addEventListener('submit', (e) => {
-            e.preventDefault();
-            const messageText = messageInput.value;
-            if (messageText && currentConversationId) {
-                sendMessage(messageText);
-            }
-        });
-
-        // Alias Modal Handlers
-        editAliasBtn.addEventListener('click', () => {
-            if (!isAliasSet) return; // Prevent clicking if alias setup is mandatory
-
-            // Reset modal to "edit" mode
-            aliasModalTitleEl.textContent = "Change Your Alias";
-            document.getElementById('save-alias-btn').textContent = "Save";
-            document.getElementById('cancel-alias-btn').classList.remove('hidden');
-
-            newAliasInput.value = currentUserAlias;
-            aliasModal.classList.remove('hidden');
-            aliasModal.classList.add('flex');
-            newAliasInput.focus();
-        });
-
-        cancelAliasBtn.addEventListener('click', () => {
-            aliasModal.classList.add('hidden');
-            aliasModal.classList.remove('flex');
-        });
-
-        saveAliasBtn.addEventListener('click', async () => {
-            const newAlias = newAliasInput.value.trim();
-            if (newAlias) {
-                const success = await saveUserAlias(newAlias);
-                
-                if (success && !isAliasSet) {
-                    // This was the mandatory initial setup
-                    isAliasSet = true;
-                    messageForm.classList.remove('hidden'); // Show message input
-                    
-                    // Reset modal for future edits
-                    aliasModalTitleEl.textContent = "Change Your Alias";
-                    document.getElementById('save-alias-btn').textContent = "Save";
-                    document.getElementById('cancel-alias-btn').classList.remove('hidden');
-                    
-                    setupConversationListener(); // Start loading data now
-                }
-            } else {
-                 showTemporaryMessage("Alias cannot be empty.", true);
-            }
-            aliasModal.classList.add('hidden');
-            aliasModal.classList.remove('flex');
-        });
-
-        // New Chat Modal Handlers
-        newChatBtn.addEventListener('click', () => {
-            if (!isAuthReady || !isAliasSet) {
-                 showTemporaryMessage("Please set your alias and wait for authentication to complete before starting a new chat.", true);
-                 return;
-            }
-            newChatModal.classList.remove('hidden');
-            newChatModal.classList.add('flex');
-            loadAllUsers();
-        });
-
-        cancelNewChatBtn.addEventListener('click', () => {
-            newChatModal.classList.add('hidden');
-            newChatModal.classList.remove('flex');
-        });
-
-        // Attach CAPTCHA handler
-        captchaForm.addEventListener('submit', handleCaptchaSubmit);
-
-        // Initialize the CAPTCHA flow on load
-        generateCaptcha();
-
-    </script>
-</body>
-</html>
+          } catch (e) {
+            console.error("Authentication error:", e);
+            setError("Failed to authenticate. Check console for details.");
+            setLoading(false);
+          }
+        }
+      });
+      
+      return () => unsubscribeAuth();
+
+    } catch (e) {
+      console.error("Firebase Initialization Error:", e);
+      setError(`Initialization Failed: ${e.message}`);
+      setLoading(false);
+    }
+  }, []);
+
+  // 2. Real-time Message Subscription Effect (onSnapshot)
+  useEffect(() => {
+    if (!db || !userId) {
+      // Prevent running queries before auth is complete
+      return;
+    }
+
+    const collectionPath = `/artifacts/${appId}/public/data/chat_messages`;
+    const messagesCollection = collection(db, collectionPath);
+    
+    // Create a query to order messages by creation time and limit the view
+    const q = query(messagesCollection, orderBy('createdAt', 'desc'), limit(50));
+
+    // Subscribe to real-time updates
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const fetchedMessages = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        // Convert Firebase Timestamp to a JS Date object for easy display
+        createdAt: doc.data().createdAt?.toDate() || new Date(),
+      })).reverse(); // Reverse to display oldest message at the top
+
+      setMessages(fetchedMessages);
+      scrollToBottom(); // Scroll to bottom on new message load
+    }, (e) => {
+      console.error("Firestore snapshot error:", e);
+      setError("Failed to fetch messages in real-time.");
+    });
+
+    // Cleanup function to unsubscribe when the component unmounts or dependencies change
+    return () => unsubscribe();
+  }, [db, userId]); 
+
+  // 3. Scroll to bottom when messages state updates
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages.length]);
+
+  // Function to send a new message
+  const sendMessage = async (e) => {
+    e.preventDefault();
+    if (!db || !userId || newMessage.trim() === '') return;
+
+    const messageText = newMessage.trim();
+    setNewMessage(''); // Clear input immediately
+
+    try {
+      const collectionPath = `/artifacts/${appId}/public/data/chat_messages`;
+      await addDoc(collection(db, collectionPath), {
+        text: messageText,
+        createdAt: serverTimestamp(),
+        senderId: userId,
+        // Add a simple color identifier for better chat differentiation
+        senderColor: '#' + (Math.random() * 0xFFFFFF << 0).toString(16).padStart(6, '0').substring(0, 6)
+      });
+    } catch (e) {
+      console.error("Error adding document: ", e);
+      setError("Failed to send message. Please try again.");
+    }
+  };
+
+  // Helper function to format timestamp
+  const formatTime = (date) => {
+    if (!date) return '';
+    return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+  };
+
+  const Message = ({ message }) => {
+    const isUser = message.senderId === userId;
+    const senderInitials = message.senderId ? message.senderId.substring(0, 4) : '####';
+
+    return (
+      <div className={`flex mb-4 ${isUser ? 'justify-end' : 'justify-start'}`}>
+        {!isUser && (
+          <div 
+            className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold text-white shrink-0 mr-2"
+            style={{ backgroundColor: message.senderColor || '#6B7280' }}
+            title={`User ID: ${message.senderId}`}
+          >
+            {senderInitials}
+          </div>
+        )}
+        <div className={`max-w-xs md:max-w-md lg:max-w-lg shadow-lg rounded-xl p-3 break-words ${isUser 
+          ? 'bg-blue-600 text-white rounded-br-none' 
+          : 'bg-gray-100 text-gray-800 rounded-tl-none'
+        }`}>
+          {!isUser && (
+            <div className="text-xs font-semibold mb-1 truncate" style={{ color: message.senderColor || '#6B7280' }}>
+              {message.senderId}
+            </div>
+          )}
+          <p className="text-sm">{message.text}</p>
+          <span className={`text-[10px] block mt-1 ${isUser ? 'text-blue-200' : 'text-gray-500'}`}>
+            {formatTime(message.createdAt)}
+          </span>
+        </div>
+        {isUser && (
+          <div 
+            className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold text-white shrink-0 ml-2"
+            style={{ backgroundColor: message.senderColor || '#6B7280' }}
+            title={`User ID: ${message.senderId}`}
+          >
+            {senderInitials}
+          </div>
+        )}
+      </div>
+    );
+  };
+  
+  // Render loading state
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-screen bg-gray-50">
+        <Loader2 className="animate-spin text-blue-600 h-10 w-10" />
+        <p className="ml-3 text-lg text-gray-600">Connecting to Chat_God...</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50 flex flex-col antialiased">
+      {/* Header */}
+      <header className="sticky top-0 z-10 bg-white shadow-lg p-4 flex items-center justify-between border-b border-gray-200">
+        <h1 className="text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-purple-600">
+          Chat_God
+        </h1>
+        <div className="text-right text-xs text-gray-500 hidden sm:block">
+          <p className="font-medium text-gray-700">Your ID:</p>
+          <p className="truncate w-36" title={userId}>{userId || 'N/A'}</p>
+        </div>
+      </header>
+
+      {/* Main Chat Area */}
+      <main className="flex-grow overflow-hidden p-4 sm:p-6">
+        <div className="h-full bg-white rounded-2xl shadow-xl flex flex-col">
+          {error && (
+            <div className="p-4 bg-red-100 text-red-700 font-medium rounded-t-2xl">
+              Error: {error}
+            </div>
+          )}
+
+          {/* Messages Container (Scrollable) */}
+          <div className="flex-grow p-4 overflow-y-auto space-y-4 custom-scrollbar">
+            {messages.length === 0 && !loading ? (
+              <div className="flex flex-col items-center justify-center h-full text-gray-400 p-8 text-center">
+                <MessageCircle className="h-10 w-10 mb-2" />
+                <p className="text-lg font-semibold">Start your conversation!</p>
+                <p className="text-sm">Messages are shared publicly with all users.</p>
+              </div>
+            ) : (
+              messages.map(msg => <Message key={msg.id} message={msg} />)
+            )}
+            {/* Scroll target */}
+            <div ref={messagesEndRef} />
+          </div>
+
+          {/* Input Form */}
+          <form onSubmit={sendMessage} className="p-4 bg-gray-50 border-t border-gray-200 rounded-b-2xl">
+            <div className="flex items-center space-x-3">
+              <input
+                type="text"
+                value={newMessage}
+                onChange={(e) => setNewMessage(e.target.value)}
+                placeholder="Type your divine message here..."
+                className="flex-grow p-3 border border-gray-300 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500 transition duration-150 shadow-sm"
+                disabled={!userId}
+              />
+              <button
+                type="submit"
+                className="p-3 bg-blue-600 text-white rounded-full hover:bg-blue-700 transition duration-150 disabled:opacity-50 disabled:cursor-not-allowed shadow-md hover:shadow-lg"
+                disabled={!userId || newMessage.trim() === ''}
+              >
+                <Send className="w-6 h-6" />
+              </button>
+            </div>
+          </form>
+        </div>
+      </main>
+
+      {/* Tailwind CSS utility classes and custom scrollbar style */}
+      <style>{`
+        /* Custom scrollbar for better aesthetics */
+        .custom-scrollbar::-webkit-scrollbar {
+          width: 8px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+          background-color: #9CA3AF;
+          border-radius: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+          background: #F3F4F6;
+        }
+      `}</style>
+    </div>
+  );
+};
+
+export default App;
