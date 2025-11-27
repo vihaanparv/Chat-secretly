@@ -179,30 +179,44 @@
                 db = getFirestore(app);
                 auth = getAuth(app);
 
-                // Authentication listener
-                onAuthStateChanged(auth, async (user) => {
+                // --- START REFACTORED AUTH LOGIC ---
+                // Explicitly attempt sign-in first and wait for completion to ensure auth state is ready.
+                try {
+                    if (initialAuthToken) {
+                        await signInWithCustomToken(auth, initialAuthToken);
+                    } else {
+                        await signInAnonymously(auth);
+                    }
+                    
+                    const user = auth.currentUser;
                     if (user) {
                         userId = user.uid;
                         isAuthReady = true;
                         userInfoStatus.textContent = "Authenticated";
-                        userIdDisplay.textContent = userId.substring(0, 8) + '...'; // Displaying first 8 chars of ID
-                        
+                        userIdDisplay.textContent = userId.substring(0, 8) + '...'; 
                     } else {
-                        // Sign in using custom token or anonymously
-                        try {
-                            if (initialAuthToken) {
-                                await signInWithCustomToken(auth, initialAuthToken);
-                            } else {
-                                await signInAnonymously(auth);
-                            }
-                        } catch (e) {
-                            console.error("Authentication failed:", e);
-                            displayError("Failed to sign in. Check console for details.");
-                            sendButton.disabled = true;
-                            userInfoStatus.textContent = "Error";
-                        }
+                        throw new Error("Sign-in completed but no user object was returned.");
+                    }
+
+                } catch (e) {
+                    console.error("Authentication failed:", e);
+                    displayError("Failed to sign in. Check console for details.");
+                    sendButton.disabled = true;
+                    userInfoStatus.textContent = "Error";
+                }
+
+                // Setup listener for subsequent state changes (less critical path)
+                onAuthStateChanged(auth, (user) => {
+                    if (!user) {
+                        // Handle session expiration/sign-out if it occurs later
+                        userId = null;
+                        isAuthReady = false;
+                        userInfoStatus.textContent = "Signed Out";
+                        sendButton.disabled = true;
                     }
                 });
+                // --- END REFACTORED AUTH LOGIC ---
+
             } catch (e) {
                 console.error("Firebase initialization error:", e);
                 displayError(`Initialization Failed: ${e.message}`);
@@ -252,7 +266,7 @@
             const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-chat-app';
             const chatId = getChatId(userId, recipientId);
             
-            // CORRECTED PATH for collaborative data: /artifacts/{appId}/public/data/private_chats/{chatId}/messages
+            // Path for collaborative data: /artifacts/{appId}/public/data/private_chats/{chatId}/messages
             const chatCollectionPath = `artifacts/${appId}/public/data/private_chats/${chatId}/messages`;
             
             const q = query(
@@ -295,7 +309,7 @@
                 const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-chat-app';
                 const chatId = getChatId(userId, targetUserId);
                 
-                // CORRECTED PATH for collaborative data: /artifacts/{appId}/public/data/private_chats/{chatId}/messages
+                // Path for collaborative data: /artifacts/{appId}/public/data/private_chats/{chatId}/messages
                 const chatCollectionPath = `artifacts/${appId}/public/data/private_chats/${chatId}/messages`;
 
                 await addDoc(collection(db, chatCollectionPath), {
