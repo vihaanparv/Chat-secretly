@@ -44,6 +44,14 @@
             </div>
         </header>
 
+        <!-- Manual ID Override (Hidden by default) -->
+        <div id="manual-id-override" class="p-3 bg-yellow-100 text-yellow-800 hidden items-center justify-between shadow-inner">
+            <p class="text-sm">Authentication failed or config invalid. Use a temporary local User ID?</p>
+            <button id="set-manual-id-button" class="bg-yellow-600 hover:bg-yellow-700 text-white font-semibold py-1 px-4 rounded-lg text-sm transition duration-200">
+                Generate Local ID
+            </button>
+        </div>
+
         <!-- Messages Area -->
         <div id="messages-container" class="flex-grow p-4 space-y-4 overflow-y-auto bg-gray-50">
             <div id="initial-prompt" class="text-center p-8 text-gray-500 border border-dashed border-gray-300 rounded-lg">
@@ -72,7 +80,7 @@
                 <input type="text" id="recipient-input" placeholder="Enter Recipient's Full User ID" required 
                        class="flex-grow p-3 border border-gray-300 rounded-lg focus:ring-green-500 focus:border-green-500 transition duration-150 shadow-inner" 
                        autocomplete="off">
-                <button type="submit" id="set-recipient-button" class="bg-green-500 hover:bg-green-600 text-white font-semibold py-3 px-6 rounded-lg shadow-md transition duration-200 disabled:opacity-50 flex items-center justify-center">
+                <button type="submit" id="set-recipient-button" disabled class="bg-green-500 hover:bg-green-600 text-white font-semibold py-3 px-6 rounded-lg shadow-md transition duration-200 disabled:opacity-50 flex items-center justify-center">
                     Start Chat
                 </button>
             </form>
@@ -124,6 +132,14 @@
         const recipientForm = document.getElementById('recipient-form');
         const recipientInput = document.getElementById('recipient-input');
         const currentChatDisplay = document.getElementById('current-chat-display');
+        const setRecipientButton = document.getElementById('set-recipient-button'); // Get this button for initial disabling
+
+        // New elements for manual ID fallback
+        const manualIdOverride = document.getElementById('manual-id-override');
+        const setManualIdButton = document.getElementById('set-manual-id-button');
+        
+        // Disable recipient form initially until auth is ready
+        setRecipientButton.disabled = true;
 
         // Utility function to get a deterministic chat ID
         function getChatId(id1, id2) {
@@ -159,6 +175,28 @@
                 tempBox.addEventListener('transitionend', () => tempBox.remove());
             }, 3000);
         }
+
+        // --- Manual ID Fallback ---
+        function setManualId() {
+            // Generate a standard UUID as a fallback identifier
+            userId = crypto.randomUUID(); 
+            isAuthReady = true;
+
+            // Update UI for manual mode
+            userInfoStatus.textContent = "Local ID Active";
+            userIdDisplay.textContent = userId.substring(0, 8) + '... (Local)';
+            userIdDisplay.classList.remove('bg-indigo-700');
+            userIdDisplay.classList.add('bg-yellow-600');
+            manualIdOverride.classList.add('hidden');
+            
+            // Enable core functionality
+            setRecipientButton.disabled = false;
+            
+            alertMessage("Using Local ID. Functionality is enabled, but persistence and true privacy may be limited.", 'bg-yellow-100 text-yellow-800');
+        }
+
+        // Attach listener for manual ID
+        setManualIdButton.addEventListener('click', setManualId);
 
         // --- Core Application Logic ---
 
@@ -203,13 +241,15 @@
                 // Authentication listener
                 onAuthStateChanged(auth, async (user) => {
                     if (user) {
+                        // SUCCESS PATH
                         userId = user.uid;
                         isAuthReady = true;
                         userInfoStatus.textContent = "Authenticated";
                         userIdDisplay.textContent = userId.substring(0, 8) + '...'; // Displaying first 8 chars of ID
+                        setRecipientButton.disabled = false; // Enable form on successful auth
                         
                     } else {
-                        // Sign in using custom token or anonymously
+                        // Attempt Sign in
                         try {
                             if (initialAuthToken) {
                                 userInfoStatus.textContent = "Authenticating with Token...";
@@ -218,18 +258,25 @@
                                 userInfoStatus.textContent = "Signing in Anonymously...";
                                 await signInAnonymously(auth);
                             }
+                            // The success of these awaits will trigger the 'if (user)' block above.
                         } catch (e) {
+                            // AUTHENTICATION FAILED PATH
                             console.error("Authentication failed:", e);
-                            displayError(`Authentication failed! (Error: ${e.code}). Check console for details.`);
+                            displayError(`Authentication failed! (Error: ${e.code}). Please use a Local ID to proceed.`);
                             sendButton.disabled = true;
                             userInfoStatus.textContent = "Auth Failed";
+                            manualIdOverride.classList.remove('hidden'); // Show manual override button
+                            setRecipientButton.disabled = true; // Keep disabled until local ID is set
                         }
                     }
                 });
             } catch (e) {
+                // FIREBASE INIT FAILED PATH (e.g., config invalid)
                 console.error("Firebase initialization error:", e);
                 displayError(`Initialization Failed: ${e.message}`);
                 userInfoStatus.textContent = "Init Error";
+                manualIdOverride.classList.remove('hidden'); // Show manual override button
+                setRecipientButton.disabled = true; // Keep disabled until local ID is set
             }
         }
 
@@ -262,7 +309,9 @@
 
         // 3. Real-time Message Listener (onSnapshot)
         function setupMessageListener(recipientId) {
-            if (!db || !isAuthReady || !recipientId) return;
+            // NOTE: db will be null if Firebase initialization failed, but we still allow the recipient form to be used
+            // This listener will only attach if db is available (i.e., Firebase init was successful).
+            if (!isAuthReady || !recipientId) return;
 
             // 1. Clean up previous listener if it exists
             if (unsubscribe) {
@@ -272,6 +321,13 @@
             initialPrompt.classList.add('hidden');
             loadingSpinner.classList.remove('hidden');
 
+            // If Firebase failed, we can't listen for real-time changes or save data.
+            if (!db) {
+                displayError("Real-time features are unavailable because Firebase failed to initialize. Data will not be saved or shared.");
+                loadingSpinner.classList.add('hidden');
+                messageForm.style.display = 'none'; // Hide the message input if we can't send
+                return;
+            }
 
             const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-chat-app';
             const chatId = getChatId(userId, recipientId);
@@ -304,6 +360,10 @@
                 displayError("Failed to fetch messages. Check your connection or recipient ID.");
                 loadingSpinner.classList.add('hidden');
             });
+
+            // Re-show the send form if the listener was successfully set up
+            messageForm.style.display = 'flex';
+            sendButton.disabled = false;
         }
 
         // 4. Send Message Handler
@@ -311,7 +371,13 @@
             e.preventDefault();
             const text = messageInput.value.trim();
 
-            if (!text || !userId || !targetUserId || !db) {
+            if (!text || !userId || !targetUserId) {
+                return;
+            }
+            
+            // Check if db is initialized before attempting to send
+            if (!db) {
+                displayError("Cannot send message: Firebase is not initialized. Please refresh or use a working configuration.");
                 return;
             }
 
@@ -333,7 +399,7 @@
 
             } catch (e) {
                 console.error("Error sending message:", e);
-                displayError("Could not send message. Please ensure the Recipient ID is correct.");
+                displayError("Could not send message. Check Firestore rules or recipient ID.");
             }
         });
 
