@@ -167,10 +167,24 @@
             try {
                 // Get global variables provided by the Canvas environment
                 const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-chat-app';
-                const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+                
+                let firebaseConfig = {};
                 const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
+                // Safely retrieve and parse firebase configuration string
+                let configString = typeof __firebase_config !== 'undefined' ? __firebase_config : '{}';
+                
+                try {
+                    firebaseConfig = JSON.parse(configString);
+                } catch (e) {
+                    console.error("Error: Could not parse Firebase configuration string:", configString, e);
+                    // Fallback to empty object if parsing fails
+                    firebaseConfig = {}; 
+                }
+
                 if (!firebaseConfig || !firebaseConfig.apiKey) {
+                    console.error("Firebase config object:", firebaseConfig);
+                    // Throw error which is caught locally and displayed to the user
                     throw new Error("Firebase configuration is missing or invalid.");
                 }
 
@@ -179,44 +193,32 @@
                 db = getFirestore(app);
                 auth = getAuth(app);
 
-                // --- START REFACTORED AUTH LOGIC ---
-                // Explicitly attempt sign-in first and wait for completion to ensure auth state is ready.
-                try {
-                    if (initialAuthToken) {
-                        await signInWithCustomToken(auth, initialAuthToken);
-                    } else {
-                        await signInAnonymously(auth);
-                    }
-                    
-                    const user = auth.currentUser;
+                // Authentication listener
+                onAuthStateChanged(auth, async (user) => {
                     if (user) {
                         userId = user.uid;
                         isAuthReady = true;
                         userInfoStatus.textContent = "Authenticated";
-                        userIdDisplay.textContent = userId.substring(0, 8) + '...'; 
+                        userIdDisplay.textContent = userId.substring(0, 8) + '...'; // Displaying first 8 chars of ID
+                        
                     } else {
-                        throw new Error("Sign-in completed but no user object was returned.");
-                    }
-
-                } catch (e) {
-                    console.error("Authentication failed:", e);
-                    displayError("Failed to sign in. Check console for details.");
-                    sendButton.disabled = true;
-                    userInfoStatus.textContent = "Error";
-                }
-
-                // Setup listener for subsequent state changes (less critical path)
-                onAuthStateChanged(auth, (user) => {
-                    if (!user) {
-                        // Handle session expiration/sign-out if it occurs later
-                        userId = null;
-                        isAuthReady = false;
-                        userInfoStatus.textContent = "Signed Out";
-                        sendButton.disabled = true;
+                        // Sign in using custom token or anonymously
+                        try {
+                            if (initialAuthToken) {
+                                userInfoStatus.textContent = "Authenticating with Token...";
+                                await signInWithCustomToken(auth, initialAuthToken);
+                            } else {
+                                userInfoStatus.textContent = "Signing in Anonymously...";
+                                await signInAnonymously(auth);
+                            }
+                        } catch (e) {
+                            console.error("Authentication failed:", e);
+                            displayError(`Authentication failed! (Error: ${e.code}). Check console for details.`);
+                            sendButton.disabled = true;
+                            userInfoStatus.textContent = "Auth Failed";
+                        }
                     }
                 });
-                // --- END REFACTORED AUTH LOGIC ---
-
             } catch (e) {
                 console.error("Firebase initialization error:", e);
                 displayError(`Initialization Failed: ${e.message}`);
@@ -266,7 +268,7 @@
             const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-chat-app';
             const chatId = getChatId(userId, recipientId);
             
-            // Path for collaborative data: /artifacts/{appId}/public/data/private_chats/{chatId}/messages
+            // CORRECTED PATH for collaborative data: /artifacts/{appId}/public/data/private_chats/{chatId}/messages
             const chatCollectionPath = `artifacts/${appId}/public/data/private_chats/${chatId}/messages`;
             
             const q = query(
@@ -309,7 +311,7 @@
                 const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-chat-app';
                 const chatId = getChatId(userId, targetUserId);
                 
-                // Path for collaborative data: /artifacts/{appId}/public/data/private_chats/{chatId}/messages
+                // CORRECTED PATH for collaborative data: /artifacts/{appId}/public/data/private_chats/{chatId}/messages
                 const chatCollectionPath = `artifacts/${appId}/public/data/private_chats/${chatId}/messages`;
 
                 await addDoc(collection(db, chatCollectionPath), {
