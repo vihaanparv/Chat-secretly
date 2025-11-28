@@ -142,7 +142,7 @@
                 tempInput.select();
                 document.execCommand('copy');
                 document.body.removeChild(tempInput);
-                alertMessage(`Copied User ID: ${userId}`, 'bg-green-100 text-green-700');
+                alertMessage(`Copied User ID: ${userId.substring(0, 8)}...`, 'bg-green-100 text-green-700');
             } else {
                 alertMessage('User ID not ready yet.', 'bg-yellow-100 text-yellow-700');
             }
@@ -165,30 +165,37 @@
         // 1. Firebase Initialization and Authentication
         async function initializeFirebase() {
             try {
-                // Get global variables provided by the Canvas environment
-                const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-chat-app';
+                userInfoStatus.textContent = "Checking configuration...";
                 
-                let firebaseConfig = {};
+                const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-chat-app';
                 const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
-                // Safely retrieve and parse firebase configuration string
-                let configString = typeof __firebase_config !== 'undefined' ? __firebase_config : '{}';
+                let firebaseConfig = {};
+                let configString = '';
                 
+                // DEFENSIVE CHECK 1: Ensure __firebase_config exists and is a string
+                if (typeof __firebase_config !== 'undefined' && typeof __firebase_config === 'string') {
+                    configString = __firebase_config;
+                } else {
+                    throw new Error("Critical: __firebase_config variable is missing or not a string.");
+                }
+
+                // DEFENSIVE CHECK 2: Robust JSON parsing
                 try {
                     firebaseConfig = JSON.parse(configString);
                 } catch (e) {
-                    console.error("Error: Could not parse Firebase configuration string:", configString, e);
-                    // Fallback to empty object if parsing fails
-                    firebaseConfig = {}; 
+                    console.error("Firebase Raw Config:", configString);
+                    throw new Error("Configuration failed to parse. Received malformed JSON.");
                 }
 
+                // DEFENSIVE CHECK 3: Check for required key
                 if (!firebaseConfig || !firebaseConfig.apiKey) {
-                    console.error("Firebase config object:", firebaseConfig);
-                    // Throw error which is caught locally and displayed to the user
-                    throw new Error("Firebase configuration is missing or invalid.");
+                    console.error("Parsed Firebase Config:", firebaseConfig);
+                    throw new Error("Configuration object is valid but missing the required 'apiKey'.");
                 }
-
-                // Initialize services
+                
+                // Initialization successful, proceed
+                userInfoStatus.textContent = "Initializing Firebase...";
                 app = initializeApp(firebaseConfig);
                 db = getFirestore(app);
                 auth = getAuth(app);
@@ -222,6 +229,7 @@
             } catch (e) {
                 console.error("Firebase initialization error:", e);
                 displayError(`Initialization Failed: ${e.message}`);
+                userInfoStatus.textContent = "Init Error";
             }
         }
 
